@@ -92,8 +92,7 @@ namespace MagicOnion.Server.Hubs
 
             // ValueTask (StreamingHubContext context) =>
             // {
-            //    T request = LZ4MessagePackSerializer.Deserialize<T>(context.Request, context.FormatterResolver);
-            //    Task<T> result = ((HubType)context.HubInstance).Foo(request);
+            //    Task<T> result = ((HubType)context.HubInstance).Foo(context.Request);
             //    return WriteInAsyncLockInTaskWithMessageId(result) || return new ValueTask(result)
             // }
             try
@@ -102,13 +101,9 @@ namespace MagicOnion.Server.Hubs
 
                 var contextArg = Expression.Parameter(typeof(StreamingHubContext), "context");
                 var requestArg = Expression.Parameter(RequestType, "request");
-                var getSerializerOptions = Expression.Property(contextArg, typeof(StreamingHubContext).GetProperty("SerializerOptions", flags)!);
                 var contextRequest = Expression.Property(contextArg, typeof(StreamingHubContext).GetProperty("Request", flags)!);
-                var noneCancellation = Expression.Default(typeof(CancellationToken));
                 var getInstanceCast = Expression.Convert(Expression.Property(contextArg, typeof(StreamingHubContext).GetProperty("HubInstance", flags)!), HubType);
-
-                var callDeserialize = Expression.Call(messagePackDeserialize.MakeGenericMethod(RequestType), contextRequest, getSerializerOptions, noneCancellation);
-                var assignRequest = Expression.Assign(requestArg, callDeserialize);
+                var assignRequest = Expression.Assign(requestArg, Expression.Convert(contextRequest, RequestType));
 
                 Expression[] arguments = new Expression[parameters.Length];
                 if (parameters.Length == 1)

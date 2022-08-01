@@ -16,12 +16,12 @@ namespace MagicOnion.Server
         void BeginInvokeMethod(ServiceContext context, Type type);
         void EndInvokeMethod(ServiceContext context, Type type, double elapsed, bool isErrorOrInterrupted);
 
-        void BeginInvokeHubMethod(StreamingHubContext context, ReadOnlyMemory<byte> request, Type type);
-        void EndInvokeHubMethod(StreamingHubContext context, int responseSize, Type? type, double elapsed, bool isErrorOrInterrupted);
-        void InvokeHubBroadcast(string groupName, int responseSize, int broadcastGroupCount);
+        void BeginInvokeHubMethod(StreamingHubContext context, object? request, Type type);
+        void EndInvokeHubMethod(StreamingHubContext context, double elapsed, bool isErrorOrInterrupted);
+        void InvokeHubBroadcast(string groupName, int broadcastGroupCount);
 
-        void WriteToStream(ServiceContext context, byte[] writeData, Type type);
-        void ReadFromStream(ServiceContext context, byte[] readData, Type type, bool complete);
+        void WriteToStream(ServiceContext context);
+        void ReadFromStream(ServiceContext context, bool complete);
 
         void Error(Exception ex, ServerCallContext context);
         void Error(Exception ex, StreamingHubContext context);
@@ -37,11 +37,11 @@ namespace MagicOnion.Server
         {
         }
 
-        public void ReadFromStream(ServiceContext context, byte[] readData, Type type, bool complete)
+        public void ReadFromStream(ServiceContext context, bool complete)
         {
         }
 
-        public void WriteToStream(ServiceContext context, byte[] writeData, Type type)
+        public void WriteToStream(ServiceContext context)
         {
         }
 
@@ -53,15 +53,15 @@ namespace MagicOnion.Server
         {
         }
 
-        public void BeginInvokeHubMethod(StreamingHubContext context, ReadOnlyMemory<byte> request, Type type)
+        public void BeginInvokeHubMethod(StreamingHubContext context, object? request, Type type)
         {
         }
 
-        public void EndInvokeHubMethod(StreamingHubContext context, int responseSize, Type? type, double elapsed, bool isErrorOrInterrupted)
+        public void EndInvokeHubMethod(StreamingHubContext context, double elapsed, bool isErrorOrInterrupted)
         {
         }
 
-        public void InvokeHubBroadcast(string groupName, int responseSize, int broadcastGroupCount)
+        public void InvokeHubBroadcast(string groupName, int broadcastGroupCount)
         {
         }
 
@@ -103,14 +103,14 @@ namespace MagicOnion.Server
             _logger.LogDebug($"{nameof(EndInvokeMethod)} type:{MethodTypeToString(context.MethodType)}  method:{context.CallContext.Method} elapsed:{elapsed} {msg}");
         }
 
-        public void WriteToStream(ServiceContext context, byte[] writeData, Type type)
+        public void WriteToStream(ServiceContext context)
         {
-            _logger.LogDebug($"{nameof(WriteToStream)} type:{MethodTypeToString(context.MethodType)}  method:{context.CallContext.Method} size:{writeData.Length}");
+            _logger.LogDebug($"{nameof(WriteToStream)} type:{MethodTypeToString(context.MethodType)}  method:{context.CallContext.Method}");
         }
 
-        public void ReadFromStream(ServiceContext context, byte[] readData, Type type, bool complete)
+        public void ReadFromStream(ServiceContext context, bool complete)
         {
-            _logger.LogDebug($"{nameof(ReadFromStream)} type:{MethodTypeToString(context.MethodType)}  method:{context.CallContext.Method} size:{readData.Length} complete:{complete}");
+            _logger.LogDebug($"{nameof(ReadFromStream)} type:{MethodTypeToString(context.MethodType)}  method:{context.CallContext.Method} complete:{complete}");
         }
 
         // enum.ToString is slow.
@@ -131,21 +131,21 @@ namespace MagicOnion.Server
             }
         }
 
-        public void BeginInvokeHubMethod(StreamingHubContext context, ReadOnlyMemory<byte> request, Type type)
+        public void BeginInvokeHubMethod(StreamingHubContext context, object? request, Type type)
         {
-            _logger.LogDebug($"{nameof(BeginInvokeHubMethod)} method:{context.Path} size:{request.Length}");
+            _logger.LogDebug($"{nameof(BeginInvokeHubMethod)} method:{context.Path}");
 
         }
 
-        public void EndInvokeHubMethod(StreamingHubContext context, int responseSize, Type? type, double elapsed, bool isErrorOrInterrupted)
+        public void EndInvokeHubMethod(StreamingHubContext context, double elapsed, bool isErrorOrInterrupted)
         {
             var msg = isErrorOrInterrupted ? "error" : "";
-            _logger.LogDebug($"{nameof(EndInvokeHubMethod)} method:{context.Path} size:{responseSize} elapsed:{elapsed} {msg}");
+            _logger.LogDebug($"{nameof(EndInvokeHubMethod)} method:{context.Path} elapsed:{elapsed} {msg}");
         }
 
-        public void InvokeHubBroadcast(string groupName, int responseSize, int broadcastGroupCount)
+        public void InvokeHubBroadcast(string groupName, int broadcastGroupCount)
         {
-            _logger.LogDebug($"{nameof(InvokeHubBroadcast)} size:{responseSize} broadcastGroupCount:{broadcastGroupCount}");
+            _logger.LogDebug($"{nameof(InvokeHubBroadcast)} broadcastGroupCount:{broadcastGroupCount}");
         }
 
         public void Error(Exception ex, ServerCallContext context)

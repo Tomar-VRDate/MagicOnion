@@ -12,23 +12,21 @@ namespace MagicOnion.Server.Hubs
 {
     public class ImmutableArrayGroupRepositoryFactory : IGroupRepositoryFactory
     {
-        public IGroupRepository CreateRepository(MessagePackSerializerOptions serializerOptions, IMagicOnionLogger logger)
+        public IGroupRepository CreateRepository(IMagicOnionLogger logger)
         {
-            return new ImmutableArrayGroupRepository(serializerOptions, logger);
+            return new ImmutableArrayGroupRepository(logger);
         }
     }
 
     public class ImmutableArrayGroupRepository : IGroupRepository
     {
-        MessagePackSerializerOptions serializerOptions;
         IMagicOnionLogger logger;
 
         readonly Func<string, IGroup> factory;
         ConcurrentDictionary<string, IGroup> dictionary = new ConcurrentDictionary<string, IGroup>();
 
-        public ImmutableArrayGroupRepository(MessagePackSerializerOptions serializerOptions, IMagicOnionLogger logger)
+        public ImmutableArrayGroupRepository(IMagicOnionLogger logger)
         {
-            this.serializerOptions = serializerOptions;
             this.factory = CreateGroup;
             this.logger = logger;
         }
@@ -40,7 +38,7 @@ namespace MagicOnion.Server.Hubs
 
         IGroup CreateGroup(string groupName)
         {
-            return new ImmutableArrayGroup(groupName, this, serializerOptions, logger);
+            return new ImmutableArrayGroup(groupName, this, logger);
         }
 
         public bool TryGet(string groupName, [NotNullWhen(true)] out IGroup? group)
@@ -58,21 +56,19 @@ namespace MagicOnion.Server.Hubs
     {
         readonly object gate = new object();
         readonly IGroupRepository parent;
-        readonly MessagePackSerializerOptions serializerOptions;
         readonly IMagicOnionLogger logger;
 
-        ImmutableArray<ServiceContext> members;
+        ImmutableArray<IServiceContextWithResponseStream<StreamingHubResponseMessage>> members;
         IInMemoryStorage? inmemoryStorage;
 
         public string GroupName { get; }
 
-        public ImmutableArrayGroup(string groupName, IGroupRepository parent, MessagePackSerializerOptions serializerOptions, IMagicOnionLogger logger)
+        public ImmutableArrayGroup(string groupName, IGroupRepository parent, IMagicOnionLogger logger)
         {
             this.GroupName = groupName;
             this.parent = parent;
-            this.serializerOptions = serializerOptions;
             this.logger = logger;
-            this.members = ImmutableArray<ServiceContext>.Empty;
+            this.members = ImmutableArray<IServiceContextWithResponseStream<StreamingHubResponseMessage>>.Empty;
         }
 
         public ValueTask<int> GetMemberCountAsync()
@@ -102,7 +98,7 @@ namespace MagicOnion.Server.Hubs
         {
             lock (gate)
             {
-                members = members.Add(context);
+                members = members.Add((IServiceContextWithResponseStream<StreamingHubResponseMessage>)context);
             }
             return default(ValueTask);
         }
@@ -113,7 +109,7 @@ namespace MagicOnion.Server.Hubs
             {
                 if (!members.IsEmpty)
                 {
-                    members = members.Remove(context);
+                    members = members.Remove((IServiceContextWithResponseStream<StreamingHubResponseMessage>)context);
                     if (inmemoryStorage != null)
                     {
                         inmemoryStorage.Remove(context.ContextId);
@@ -136,7 +132,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteAllAsync<T>(int methodId, T value, bool fireAndForget)
         {
-            var message = BuildMessage(methodId, value);
+            var message = new StreamingHubResponseMessage(methodId, value);
 
             var source = members;
 
@@ -146,7 +142,7 @@ namespace MagicOnion.Server.Hubs
                 {
                     source[i].QueueResponseStreamWrite(message);
                 }
-                logger.InvokeHubBroadcast(GroupName, message.Length, source.Length);
+                logger.InvokeHubBroadcast(GroupName, source.Length);
                 return TaskEx.CompletedTask;
             }
             else
@@ -157,7 +153,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteExceptAsync<T>(int methodId, T value, Guid connectionId, bool fireAndForget)
         {
-            var message = BuildMessage(methodId, value);
+            var message = new StreamingHubResponseMessage(methodId, value);
 
             var source = members;
             if (fireAndForget)
@@ -171,7 +167,7 @@ namespace MagicOnion.Server.Hubs
                         writeCount++;
                     }
                 }
-                logger.InvokeHubBroadcast(GroupName, message.Length, writeCount);
+                logger.InvokeHubBroadcast(GroupName, writeCount);
                 return TaskEx.CompletedTask;
             }
             else
@@ -182,7 +178,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteExceptAsync<T>(int methodId, T value, Guid[] connectionIds, bool fireAndForget)
         {
-            var message = BuildMessage(methodId, value);
+            var message = new StreamingHubResponseMessage(methodId, value);
 
             var source = members;
             if (fireAndForget)
@@ -203,7 +199,7 @@ namespace MagicOnion.Server.Hubs
                 NEXT:
                     continue;
                 }
-                logger.InvokeHubBroadcast(GroupName, message.Length, writeCount);
+                logger.InvokeHubBroadcast(GroupName, writeCount);
                 return TaskEx.CompletedTask;
             }
             else
@@ -214,8 +210,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteToAsync<T>(int methodId, T value, Guid connectionId, bool fireAndForget)
         {
-            var message = BuildMessage(methodId, value);
-
+            var message = new StreamingHubResponseMessage(methodId, value);
             var source = members;
 
             if (fireAndForget)
@@ -230,7 +225,7 @@ namespace MagicOnion.Server.Hubs
                         break;
                     }
                 }
-                logger.InvokeHubBroadcast(GroupName, message.Length, writeCount);
+                logger.InvokeHubBroadcast(GroupName, writeCount);
                 return TaskEx.CompletedTask;
             }
             else
@@ -241,7 +236,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteToAsync<T>(int methodId, T value, Guid[] connectionIds, bool fireAndForget)
         {
-            var message = BuildMessage(methodId, value);
+            var message = new StreamingHubResponseMessage(methodId, value);
 
             var source = members;
             if (fireAndForget)
@@ -262,7 +257,7 @@ namespace MagicOnion.Server.Hubs
                 NEXT:
                     continue;
                 }
-                logger.InvokeHubBroadcast(GroupName, message.Length, writeCount);
+                logger.InvokeHubBroadcast(GroupName, writeCount);
                 return TaskEx.CompletedTask;
             }
             else
@@ -271,12 +266,8 @@ namespace MagicOnion.Server.Hubs
             }
         }
 
-        public Task WriteExceptRawAsync(ArraySegment<byte> msg, Guid[] exceptConnectionIds, bool fireAndForget)
+        public Task WriteExceptRawAsync(StreamingHubResponseMessage msg, Guid[] exceptConnectionIds, bool fireAndForget)
         {
-            // oh, copy is bad but current gRPC interface only accepts byte[]...
-            var message = new byte[msg.Count];
-            Array.Copy(msg.Array!, msg.Offset, message, 0, message.Length);
-
             var source = members;
             if (fireAndForget)
             {
@@ -285,7 +276,7 @@ namespace MagicOnion.Server.Hubs
                 {
                     for (int i = 0; i < source.Length; i++)
                     {
-                        source[i].QueueResponseStreamWrite(message);
+                        source[i].QueueResponseStreamWrite(msg);
                         writeCount++;
                     }
                 }
@@ -300,13 +291,13 @@ namespace MagicOnion.Server.Hubs
                                 goto NEXT;
                             }
                         }
-                        source[i].QueueResponseStreamWrite(message);
+                        source[i].QueueResponseStreamWrite(msg);
                         writeCount++;
                     NEXT:
                         continue;
                     }
                 }
-                logger.InvokeHubBroadcast(GroupName, message.Length, writeCount);
+                logger.InvokeHubBroadcast(GroupName, writeCount);
                 return TaskEx.CompletedTask;
             }
             else
@@ -315,12 +306,8 @@ namespace MagicOnion.Server.Hubs
             }
         }
 
-        public Task WriteToRawAsync(ArraySegment<byte> msg, Guid[] connectionIds, bool fireAndForget)
+        public Task WriteToRawAsync(StreamingHubResponseMessage msg, Guid[] connectionIds, bool fireAndForget)
         {
-            // oh, copy is bad but current gRPC interface only accepts byte[]...
-            var message = new byte[msg.Count];
-            Array.Copy(msg.Array!, msg.Offset, message, 0, message.Length);
-
             var source = members;
             if (fireAndForget)
             {
@@ -336,32 +323,19 @@ namespace MagicOnion.Server.Hubs
                                 goto NEXT;
                             }
                         }
-                        source[i].QueueResponseStreamWrite(message);
+                        source[i].QueueResponseStreamWrite(msg);
                         writeCount++;
                     NEXT:
                         continue;
                     }
 
-                    logger.InvokeHubBroadcast(GroupName, message.Length, writeCount);
+                    logger.InvokeHubBroadcast(GroupName, writeCount);
                 }
                 return TaskEx.CompletedTask;
             }
             else
             {
                 throw new NotSupportedException("The write operation must be called with Fire and Forget option");
-            }
-        }
-
-        byte[] BuildMessage<T>(int methodId, T value)
-        {
-            using (var buffer = ArrayPoolBufferWriter.RentThreadStaticWriter())
-            {
-                var writer = new MessagePackWriter(buffer);
-                writer.WriteArrayHeader(2);
-                writer.WriteInt32(methodId);
-                MessagePackSerializer.Serialize(ref writer, value, serializerOptions);
-                writer.Flush();
-                return buffer.WrittenSpan.ToArray();
             }
         }
     }

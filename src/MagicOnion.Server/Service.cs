@@ -9,7 +9,7 @@ namespace MagicOnion.Server
     public abstract class ServiceBase<TServiceInterface> : IService<TServiceInterface>
         where TServiceInterface : IServiceMarker
     {
-        public ServiceContext Context { get; set; }
+        public ServiceContext Context { get; internal set; }
 
         public ServiceBase()
         {
@@ -50,19 +50,19 @@ namespace MagicOnion.Server
         [Ignore]
         public ClientStreamingContext<TRequest, TResponse> GetClientStreamingContext<TRequest, TResponse>()
         {
-            return new ClientStreamingContext<TRequest, TResponse>(Context);
+            return new ClientStreamingContext<TRequest, TResponse>((StreamingServiceContext<TRequest, Nil /* Dummy */>)Context);
         }
 
         [Ignore]
         public ServerStreamingContext<TResponse> GetServerStreamingContext<TResponse>()
         {
-            return new ServerStreamingContext<TResponse>(Context);
+            return new ServerStreamingContext<TResponse>((StreamingServiceContext<Nil /* Dummy */, TResponse>)Context);
         }
 
         [Ignore]
         public DuplexStreamingContext<TRequest, TResponse> GetDuplexStreamingContext<TRequest, TResponse>()
         {
-            return new DuplexStreamingContext<TRequest, TResponse>(Context);
+            return new DuplexStreamingContext<TRequest, TResponse>((StreamingServiceContext<TRequest, TResponse>)Context);
         }
 
         // Interface methods for Client

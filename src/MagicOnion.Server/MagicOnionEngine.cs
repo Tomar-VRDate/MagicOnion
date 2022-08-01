@@ -184,7 +184,7 @@ namespace MagicOnion.Server
                         else
                         {
                             // create handler
-                            var handler = new MethodHandler(classType, methodInfo, methodName, new MethodHandlerOptions(options), serviceProvider);
+                            var handler = new MethodHandler(classType, methodInfo, methodName, new MethodHandlerOptions(options), serviceProvider, false);
                             if (!handlers.Add(handler))
                             {
                                 throw new InvalidOperationException($"Method does not allow overload, {className}.{methodName}");
@@ -194,7 +194,7 @@ namespace MagicOnion.Server
 
                     if (isStreamingHub)
                     {
-                        var connectHandler = new MethodHandler(classType, classType.GetMethod("Connect")!, "Connect", new MethodHandlerOptions(options), serviceProvider);
+                        var connectHandler = new MethodHandler(classType, classType.GetMethod("Connect")!, "Connect", new MethodHandlerOptions(options), serviceProvider, isStreamingHub);
                         if (!handlers.Add(connectHandler))
                         {
                             throw new InvalidOperationException($"Method does not allow overload, {className}.Connect");
@@ -212,7 +212,7 @@ namespace MagicOnion.Server
                         {
                             factory = serviceProvider.GetRequiredService<IGroupRepositoryFactory>();
                         }
-                        StreamingHubHandlerRepository.AddGroupRepository(connectHandler, factory.CreateRepository(options.SerializerOptions, logger));
+                        StreamingHubHandlerRepository.AddGroupRepository(connectHandler, factory.CreateRepository(logger));
                     }
                 }
             }

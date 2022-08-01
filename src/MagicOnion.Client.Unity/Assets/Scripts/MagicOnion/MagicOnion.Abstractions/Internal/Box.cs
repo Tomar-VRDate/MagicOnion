@@ -53,5 +53,27 @@ namespace MagicOnion.Internal
             => (value is MessagePack.Nil) ? (Box<T>)(object)Nil
                 : (value is bool b) ? (Box<T>)(object)(b ? BoolTrue : BoolFalse)
                 : new Box<T>(value);
+
+        public static T FromRaw<T, TRaw>(TRaw rawValue)
+            => Cache<T, TRaw>.FromRaw(rawValue);
+        public static TRaw ToRaw<T, TRaw>(T value)
+            => Cache<T, TRaw>.ToRaw(value);
+
+        static class Cache<T, TRaw>
+        {
+            public static Func<T, TRaw> ToRaw { get; }
+            public static Func<TRaw, T> FromRaw { get; }
+
+            static Cache()
+            {
+                ToRaw = (typeof(TRaw) == typeof(Box<T>))
+                    ? (Func<T, TRaw>)(x => (TRaw)(object)Box.Create(x))
+                    : x => (TRaw)(object)x;
+
+                FromRaw = (typeof(TRaw) == typeof(Box<T>)
+                    ? (Func<TRaw, T>)(x => ((Box<T>)(object)x).Value)
+                    : x => (T)(object)x);
+            }
+        }
     }
 }

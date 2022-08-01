@@ -12,23 +12,21 @@ namespace MagicOnion.Server.Hubs
 {
     public class ConcurrentDictionaryGroupRepositoryFactory : IGroupRepositoryFactory
     {
-        public IGroupRepository CreateRepository(MessagePackSerializerOptions serializerOptions, IMagicOnionLogger logger)
+        public IGroupRepository CreateRepository(IMagicOnionLogger logger)
         {
-            return new ConcurrentDictionaryGroupRepository(serializerOptions, logger);
+            return new ConcurrentDictionaryGroupRepository(logger);
         }
     }
 
     public class ConcurrentDictionaryGroupRepository : IGroupRepository
     {
-        MessagePackSerializerOptions serializerOptions;
         IMagicOnionLogger logger;
 
         readonly Func<string, IGroup> factory;
         ConcurrentDictionary<string, IGroup> dictionary = new ConcurrentDictionary<string, IGroup>();
 
-        public ConcurrentDictionaryGroupRepository(MessagePackSerializerOptions serializerOptions, IMagicOnionLogger logger)
+        public ConcurrentDictionaryGroupRepository(IMagicOnionLogger logger)
         {
-            this.serializerOptions = serializerOptions;
             this.factory = CreateGroup;
             this.logger = logger;
         }
@@ -40,7 +38,7 @@ namespace MagicOnion.Server.Hubs
 
         IGroup CreateGroup(string groupName)
         {
-            return new ConcurrentDictionaryGroup(groupName, this, serializerOptions, logger);
+            return new ConcurrentDictionaryGroup(groupName, this, logger);
         }
 
         public bool TryGet(string groupName, [NotNullWhen(true)] out IGroup? group)
@@ -63,21 +61,19 @@ namespace MagicOnion.Server.Hubs
         readonly object gate = new object();
 
         readonly IGroupRepository parent;
-        readonly MessagePackSerializerOptions serializerOptions;
         readonly IMagicOnionLogger logger;
 
-        ConcurrentDictionary<Guid, ServiceContext> members;
+        ConcurrentDictionary<Guid, IServiceContextWithResponseStream<StreamingHubResponseMessage>> members;
         IInMemoryStorage? inmemoryStorage;
 
         public string GroupName { get; }
 
-        public ConcurrentDictionaryGroup(string groupName, IGroupRepository parent, MessagePackSerializerOptions serializerOptions, IMagicOnionLogger logger)
+        public ConcurrentDictionaryGroup(string groupName, IGroupRepository parent, IMagicOnionLogger logger)
         {
             this.GroupName = groupName;
             this.parent = parent;
-            this.serializerOptions = serializerOptions;
             this.logger = logger;
-            this.members = new ConcurrentDictionary<Guid, ServiceContext>();
+            this.members = new ConcurrentDictionary<Guid, IServiceContextWithResponseStream<StreamingHubResponseMessage>>();
         }
 
         public ValueTask<int> GetMemberCountAsync()
@@ -105,7 +101,7 @@ namespace MagicOnion.Server.Hubs
 
         public ValueTask AddAsync(ServiceContext context)
         {
-            if (members.TryAdd(context.ContextId, context))
+            if (members.TryAdd(context.ContextId, (IServiceContextWithResponseStream<StreamingHubResponseMessage>)context))
             {
                 Interlocked.Increment(ref approximatelyLength);
             }
@@ -137,7 +133,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteAllAsync<T>(int methodId, T value, bool fireAndForget)
         {
-            var message = BuildMessage(methodId, value);
+            var message = new StreamingHubResponseMessage(methodId, value);
 
             if (fireAndForget)
             {
@@ -147,7 +143,7 @@ namespace MagicOnion.Server.Hubs
                     item.Value.QueueResponseStreamWrite(message);
                     writeCount++;
                 }
-                logger.InvokeHubBroadcast(GroupName, message.Length, writeCount);
+                logger.InvokeHubBroadcast(GroupName, writeCount);
                 return TaskEx.CompletedTask;
             }
             else
@@ -158,7 +154,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteExceptAsync<T>(int methodId, T value, Guid connectionId, bool fireAndForget)
         {
-            var message = BuildMessage(methodId, value);
+            var message = new StreamingHubResponseMessage(methodId, value);
             if (fireAndForget)
             {
                 var writeCount = 0;
@@ -170,7 +166,7 @@ namespace MagicOnion.Server.Hubs
                         writeCount++;
                     }
                 }
-                logger.InvokeHubBroadcast(GroupName, message.Length, writeCount);
+                logger.InvokeHubBroadcast(GroupName, writeCount);
                 return TaskEx.CompletedTask;
             }
             else
@@ -181,7 +177,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteExceptAsync<T>(int methodId, T value, Guid[] connectionIds, bool fireAndForget)
         {
-            var message = BuildMessage(methodId, value);
+            var message = new StreamingHubResponseMessage(methodId, value);
             if (fireAndForget)
             {
                 var writeCount = 0;
@@ -199,7 +195,7 @@ namespace MagicOnion.Server.Hubs
                     NEXT:
                     continue;
                 }
-                logger.InvokeHubBroadcast(GroupName, message.Length, writeCount);
+                logger.InvokeHubBroadcast(GroupName, writeCount);
                 return TaskEx.CompletedTask;
             }
             else
@@ -210,13 +206,13 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteToAsync<T>(int methodId, T value, Guid connectionId, bool fireAndForget)
         {
-            var message = BuildMessage(methodId, value);
+            var message = new StreamingHubResponseMessage(methodId, value);
             if (fireAndForget)
             {
                 if (members.TryGetValue(connectionId, out var context))
                 {
                     context.QueueResponseStreamWrite(message);
-                    logger.InvokeHubBroadcast(GroupName, message.Length, 1);
+                    logger.InvokeHubBroadcast(GroupName, 1);
                 }
                 return TaskEx.CompletedTask;
             }
@@ -228,7 +224,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteToAsync<T>(int methodId, T value, Guid[] connectionIds, bool fireAndForget)
         {
-            var message = BuildMessage(methodId, value);
+            var message = new StreamingHubResponseMessage(methodId, value);
             if (fireAndForget)
             {
                 var writeCount = 0;
@@ -240,7 +236,7 @@ namespace MagicOnion.Server.Hubs
                         writeCount++;
                     }
                 }
-                logger.InvokeHubBroadcast(GroupName, message.Length, writeCount);
+                logger.InvokeHubBroadcast(GroupName, writeCount);
                 return TaskEx.CompletedTask;
             }
             else
@@ -249,11 +245,9 @@ namespace MagicOnion.Server.Hubs
             }
         }
 
-        public Task WriteExceptRawAsync(ArraySegment<byte> msg, Guid[] exceptConnectionIds, bool fireAndForget)
+        public Task WriteExceptRawAsync(StreamingHubResponseMessage msg, Guid[] exceptConnectionIds, bool fireAndForget)
         {
             // oh, copy is bad but current gRPC interface only accepts byte[]...
-            var message = new byte[msg.Count];
-            Array.Copy(msg.Array!, msg.Offset, message, 0, message.Length);
             if (fireAndForget)
             {
                 if (exceptConnectionIds == null)
@@ -261,10 +255,10 @@ namespace MagicOnion.Server.Hubs
                     var writeCount = 0;
                     foreach (var item in members)
                     {
-                        item.Value.QueueResponseStreamWrite(message);
+                        item.Value.QueueResponseStreamWrite(msg);
                         writeCount++;
                     }
-                    logger.InvokeHubBroadcast(GroupName, message.Length, writeCount);
+                    logger.InvokeHubBroadcast(GroupName, writeCount);
                     return TaskEx.CompletedTask;
                 }
                 else
@@ -279,12 +273,12 @@ namespace MagicOnion.Server.Hubs
                                 goto NEXT;
                             }
                         }
-                        item.Value.QueueResponseStreamWrite(message);
+                        item.Value.QueueResponseStreamWrite(msg);
                         writeCount++;
                         NEXT:
                         continue;
                     }
-                    logger.InvokeHubBroadcast(GroupName, message.Length, writeCount);
+                    logger.InvokeHubBroadcast(GroupName, writeCount);
                     return TaskEx.CompletedTask;
                 }
             }
@@ -296,11 +290,8 @@ namespace MagicOnion.Server.Hubs
 
 
 
-        public Task WriteToRawAsync(ArraySegment<byte> msg, Guid[] connectionIds, bool fireAndForget)
+        public Task WriteToRawAsync(StreamingHubResponseMessage msg, Guid[] connectionIds, bool fireAndForget)
         {
-            // oh, copy is bad but current gRPC interface only accepts byte[]...
-            var message = new byte[msg.Count];
-            Array.Copy(msg.Array!, msg.Offset, message, 0, message.Length);
             if (fireAndForget)
             {
                 if (connectionIds != null)
@@ -310,12 +301,12 @@ namespace MagicOnion.Server.Hubs
                     {
                         if (members.TryGetValue(item, out var context))
                         {
-                            context.QueueResponseStreamWrite(message);
+                            context.QueueResponseStreamWrite(msg);
                             writeCount++;
                         }
                     }
 
-                    logger.InvokeHubBroadcast(GroupName, message.Length, writeCount);
+                    logger.InvokeHubBroadcast(GroupName, writeCount);
                 }
 
                 return TaskEx.CompletedTask;
@@ -323,19 +314,6 @@ namespace MagicOnion.Server.Hubs
             else
             {
                 throw new NotSupportedException("The write operation must be called with Fire and Forget option");
-            }
-        }
-
-        byte[] BuildMessage<T>(int methodId, T value)
-        {
-            using (var buffer = ArrayPoolBufferWriter.RentThreadStaticWriter())
-            {
-                var writer = new MessagePackWriter(buffer);
-                writer.WriteArrayHeader(2);
-                writer.WriteInt32(methodId);
-                MessagePackSerializer.Serialize(ref writer, value, serializerOptions);
-                writer.Flush();
-                return buffer.WrittenSpan.ToArray();
             }
         }
 

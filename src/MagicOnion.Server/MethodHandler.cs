@@ -43,6 +43,7 @@ namespace MagicOnion.Server
         public readonly Type RequestType;
         public readonly Type UnwrappedResponseType;
 
+        readonly bool isStreamingHub;
         readonly MessagePackSerializerOptions serializerOptions;
         readonly bool responseIsTask;
 
@@ -53,7 +54,7 @@ namespace MagicOnion.Server
             .First(x => x.Name == "Deserialize" && x.GetParameters().Length == 3 && x.GetParameters()[0].ParameterType == typeof(ReadOnlyMemory<byte>) && x.GetParameters()[1].ParameterType == typeof(MessagePackSerializerOptions));
         static readonly MethodInfo createService = typeof(ServiceProviderHelper).GetMethod(nameof(ServiceProviderHelper.CreateService), BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)!;
 
-        public MethodHandler(Type classType, MethodInfo methodInfo, string methodName, MethodHandlerOptions handlerOptions, IServiceProvider serviceProvider)
+        public MethodHandler(Type classType, MethodInfo methodInfo, string methodName, MethodHandlerOptions handlerOptions, IServiceProvider serviceProvider, bool isStreamingHub)
         {
             this.methodHandlerId = Interlocked.Increment(ref methodHandlerIdBuild);
             this.serviceProvider = serviceProvider;
@@ -68,6 +69,7 @@ namespace MagicOnion.Server
             this.UnwrappedResponseType = UnwrapResponseType(methodInfo, out mt, out responseIsTask, out var requestType);
             this.MethodType = mt;
             this.serializerOptions = handlerOptions.SerializerOptions;
+            this.isStreamingHub = isStreamingHub;
 
             var parameters = methodInfo.GetParameters();
             if (requestType == null)
@@ -363,7 +365,8 @@ namespace MagicOnion.Server
         {
             var method = GrpcMethodHelper.CreateMethod<TResponse, TRawResponse>(this.MethodType, this.ServiceName, this.MethodName, serializerOptions);
 #pragma warning disable CS8604
-            binder.AddMethod(new MagicOnionServerMethod<Box<Nil>, TRawResponse>(method.Method, this), async (request, context) => method.ToRawResponse(await UnaryServerMethod<Nil, TResponse>(method.FromRawRequest(request), context)));
+            binder.AddMethod(new MagicOnionServerMethod<Box<Nil>, TRawResponse>(method.Method, this), 
+                async (request, context) => method.ToRawResponse(await UnaryServerMethod<Nil, TResponse>(method.FromRawRequest(request), context)));
 #pragma warning restore CS8604
         }
 
@@ -373,7 +376,58 @@ namespace MagicOnion.Server
         {
             var method = GrpcMethodHelper.CreateMethod<TRequest, TResponse, TRawRequest, TRawResponse>(this.MethodType, this.ServiceName, this.MethodName, serializerOptions);
 #pragma warning disable CS8604
-            binder.AddMethod(new MagicOnionServerMethod<TRawRequest, TRawResponse>(method.Method, this), async (request, context) => method.ToRawResponse(await UnaryServerMethod<TRequest, TResponse>(method.FromRawRequest(request), context)));
+            binder.AddMethod(new MagicOnionServerMethod<TRawRequest, TRawResponse>(method.Method, this), 
+                async (request, context) => method.ToRawResponse(await UnaryServerMethod<TRequest, TResponse>(method.FromRawRequest(request), context)));
+#pragma warning restore CS8604
+        }
+
+        void BindDuplexStreamingHandler(ServiceBinderBase binder, bool isStreamingHub)
+        {
+            // NOTE: ServiceBinderBase.AddMethod has `class` generic constraint.
+            //       We need to box an instance of the value type.
+            var rawRequestType = RequestType.IsValueType ? typeof(Box<>).MakeGenericType(RequestType) : RequestType;
+            var rawResponseType = UnwrappedResponseType.IsValueType ? typeof(Box<>).MakeGenericType(UnwrappedResponseType) : UnwrappedResponseType;
+
+            var bindMethod = isStreamingHub
+                ? this.GetType().GetMethod(nameof(BindDuplexStreamingHandler_StreamingHub), BindingFlags.Instance | BindingFlags.NonPublic)!
+                : this.GetType().GetMethod(nameof(BindDuplexStreamingHandler_Standard), BindingFlags.Instance | BindingFlags.NonPublic)!;
+            ((Action<ServiceBinderBase>)bindMethod.MakeGenericMethod(RequestType, UnwrappedResponseType, rawRequestType, rawResponseType).CreateDelegate(typeof(Action<ServiceBinderBase>), this))(binder);
+        }
+
+        void BindDuplexStreamingHandler_Standard<TRequest, TResponse, TRawRequest, TRawResponse>(ServiceBinderBase binder)
+            where TRawRequest : class
+            where TRawResponse : class
+        {
+            var method = GrpcMethodHelper.CreateMethod<TRequest, TResponse, TRawRequest, TRawResponse>(this.MethodType, this.ServiceName, this.MethodName, serializerOptions);
+#pragma warning disable CS8604
+            binder.AddMethod(new MagicOnionServerMethod<TRawRequest, TRawResponse>(method.Method, this),
+                async (request, response, context) => await DuplexStreamingServerMethod<TRequest, TResponse>(
+                    UnboxAsyncStreamReader.Create<TRequest, TRawRequest>(request),
+                    BoxServerStreamWriter.Create<TResponse, TRawResponse>(response),
+                    context
+                ));
+#pragma warning restore CS8604
+        }
+        
+        void BindDuplexStreamingHandler_StreamingHub<TRequest, TResponse, TRawRequest, TRawResponse>(ServiceBinderBase binder)
+            where TRawRequest : class
+            where TRawResponse : class
+        {
+            // StreamingHub uses the special marshallers for streaming messages serialization.
+            var method = new GrpcMethodHelper.MagicOnionMethod<TRequest, TResponse, TRawRequest, TRawResponse>(new Method<TRawRequest, TRawResponse>(
+                this.MethodType,
+                this.ServiceName,
+                this.MethodName,
+                (Marshaller<TRawRequest>)(object)Hubs.StreamingHubMarshaller.CreateForRequest(this, serializerOptions),
+                (Marshaller<TRawResponse>)(object)Hubs.StreamingHubMarshaller.CreateForResponse(serializerOptions)
+            ));
+#pragma warning disable CS8604
+            binder.AddMethod(new MagicOnionServerMethod<TRawRequest, TRawResponse>(method.Method, this),
+                async (request, response, context) => await DuplexStreamingServerMethod<TRequest, TResponse>(
+                    UnboxAsyncStreamReader.Create<TRequest, TRawRequest>(request),
+                    BoxServerStreamWriter.Create<TResponse, TRawResponse>(response),
+                    context
+                ));
 #pragma warning restore CS8604
         }
 
@@ -408,12 +462,7 @@ namespace MagicOnion.Server
                     break;
                 case MethodType.DuplexStreaming:
                     {
-                        var method = new Method<byte[], byte[]>(this.MethodType, this.ServiceName, this.MethodName, MagicOnionMarshallers.ThroughMarshaller, MagicOnionMarshallers.ThroughMarshaller);
-                        var genericMethod = this.GetType()
-                            .GetMethod(nameof(DuplexStreamingServerMethod), BindingFlags.Instance | BindingFlags.NonPublic)!
-                            .MakeGenericMethod(RequestType, UnwrappedResponseType);
-                        var handler = (DuplexStreamingServerMethod<byte[], byte[]>)genericMethod.CreateDelegate(typeof(DuplexStreamingServerMethod<byte[], byte[]>), this);
-                        binder.AddMethod(new MagicOnionServerMethod<byte[], byte[]>(method, this), handler);
+                        BindDuplexStreamingHandler(binder, isStreamingHub);
                     }
                     break;
                 default:
@@ -502,14 +551,24 @@ namespace MagicOnion.Server
             return response;
         }
 
-        async Task<byte[]> ClientStreamingServerMethod<TRequest, TResponse>(IAsyncStreamReader<byte[]> requestStream, ServerCallContext context)
+        async Task<TResponse?> ClientStreamingServerMethod<TRequest, TResponse>(IAsyncStreamReader<TRequest> requestStream, ServerCallContext context)
         {
             var isErrorOrInterrupted = false;
-            var serviceContext = new ServiceContext(ServiceType, MethodInfo, AttributeLookup, this.MethodType, context, serializerOptions, logger, this, context.GetHttpContext().RequestServices)
-            {
-                RequestStream = requestStream
-            };
-            byte[] response = emptyBytes;
+            var serviceContext = new StreamingServiceContext<TRequest, Nil /* Dummy */>(
+                ServiceType,
+                MethodInfo,
+                AttributeLookup,
+                this.MethodType,
+                context,
+                serializerOptions,
+                logger,
+                this,
+                context.GetHttpContext().RequestServices,
+                requestStream,
+                default
+            );
+
+            TResponse? response;
             try
             {
                 using (requestStream as IDisposable)
@@ -520,14 +579,14 @@ namespace MagicOnion.Server
                         ServiceContext.currentServiceContext.Value = serviceContext;
                     }
                     await this.methodBody(serviceContext).ConfigureAwait(false);
-                    response = serviceContext.Result as byte[] ?? emptyBytes;
+                    response = serviceContext.Result is TResponse r ? r : default;
                 }
             }
             catch (ReturnStatusException ex)
             {
                 isErrorOrInterrupted = true;
                 context.Status = ex.ToStatus();
-                response = emptyBytes;
+                response = default;
             }
             catch (Exception ex)
             {
@@ -536,7 +595,7 @@ namespace MagicOnion.Server
                 {
                     context.Status = new Status(StatusCode.Unknown, ex.ToString());
                     logger.Error(ex, context);
-                    response = emptyBytes;
+                    response = default;
                 }
                 else
                 {
@@ -547,16 +606,26 @@ namespace MagicOnion.Server
             {
                 logger.EndInvokeMethod(serviceContext, typeof(TResponse), (DateTime.UtcNow - serviceContext.Timestamp).TotalMilliseconds, isErrorOrInterrupted);
             }
+
             return response;
         }
 
-        async Task<byte[]> ServerStreamingServerMethod<TRequest, TResponse>(byte[] request, IServerStreamWriter<byte[]> responseStream, ServerCallContext context)
+        async Task<byte[]> ServerStreamingServerMethod<TRequest, TResponse>(TRequest request, IServerStreamWriter<TResponse> responseStream, ServerCallContext context)
         {
             var isErrorOrInterrupted = false;
-            var serviceContext = new ServiceContext(ServiceType, MethodInfo, AttributeLookup, this.MethodType, context, serializerOptions, logger, this, context.GetHttpContext().RequestServices)
-            {
-                ResponseStream = responseStream,
-            };
+            var serviceContext = new StreamingServiceContext<Nil /* Dummy */, TResponse>(
+                ServiceType,
+                MethodInfo,
+                AttributeLookup,
+                this.MethodType,
+                context,
+                serializerOptions, 
+                logger,
+                this,
+                context.GetHttpContext().RequestServices,
+                default,
+                responseStream
+            );
             serviceContext.SetRawRequest(request);
             try
             {
@@ -566,13 +635,13 @@ namespace MagicOnion.Server
                     ServiceContext.currentServiceContext.Value = serviceContext;
                 }
                 await this.methodBody(serviceContext).ConfigureAwait(false);
-                return emptyBytes;
+                return Array.Empty<byte>();
             }
             catch (ReturnStatusException ex)
             {
                 isErrorOrInterrupted = true;
                 context.Status = ex.ToStatus();
-                return emptyBytes;
+                return Array.Empty<byte>();
             }
             catch (Exception ex)
             {
@@ -581,7 +650,7 @@ namespace MagicOnion.Server
                 {
                     context.Status = new Status(StatusCode.Unknown, ex.ToString());
                     logger.Error(ex, context);
-                    return emptyBytes;
+                    return Array.Empty<byte>();
                 }
                 else
                 {
@@ -594,14 +663,22 @@ namespace MagicOnion.Server
             }
         }
 
-        async Task<byte[]> DuplexStreamingServerMethod<TRequest, TResponse>(IAsyncStreamReader<byte[]> requestStream, IServerStreamWriter<byte[]> responseStream, ServerCallContext context)
+        async Task<byte[]> DuplexStreamingServerMethod<TRequest, TResponse>(IAsyncStreamReader<TRequest> requestStream, IServerStreamWriter<TResponse> responseStream, ServerCallContext context)
         {
             var isErrorOrInterrupted = false;
-            var serviceContext = new ServiceContext(ServiceType, MethodInfo, AttributeLookup, this.MethodType, context, serializerOptions, logger, this, context.GetHttpContext().RequestServices)
-            {
-                RequestStream = requestStream,
-                ResponseStream = responseStream
-            };
+            var serviceContext = new StreamingServiceContext<TRequest, TResponse>(
+                ServiceType,
+                MethodInfo,
+                AttributeLookup,
+                this.MethodType,
+                context,
+                serializerOptions,
+                logger,
+                this,
+                context.GetHttpContext().RequestServices,
+                requestStream,
+                responseStream
+            );
             try
             {
                 logger.BeginInvokeMethod(serviceContext, typeof(Nil));
@@ -613,14 +690,14 @@ namespace MagicOnion.Server
                     }
                     await this.methodBody(serviceContext).ConfigureAwait(false);
 
-                    return emptyBytes;
+                    return Array.Empty<byte>();
                 }
             }
             catch (ReturnStatusException ex)
             {
                 isErrorOrInterrupted = true;
                 context.Status = ex.ToStatus();
-                return emptyBytes;
+                return Array.Empty<byte>();
             }
             catch (Exception ex)
             {
@@ -629,7 +706,7 @@ namespace MagicOnion.Server
                 {
                     context.Status = new Status(StatusCode.Unknown, ex.ToString());
                     logger.Error(ex, context);
-                    return emptyBytes;
+                    return Array.Empty<byte>();
                 }
                 else
                 {

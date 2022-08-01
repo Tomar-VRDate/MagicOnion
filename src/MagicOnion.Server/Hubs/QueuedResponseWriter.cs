@@ -2,21 +2,21 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Threading.Channels;
 
-namespace MagicOnion.Server
+namespace MagicOnion.Server.Hubs
 {
     // Grpc's ResponseStream(IAsyncStreamWriter) does not allow multithread call.
     // IGroup is sometimes called from many caller(multithread) and invoke ResponseStream.Write
     // So requires queueing.
 
-    internal class QueuedResponseWriter : IDisposable
+    internal class QueuedResponseWriter<T> : IDisposable
     {
-        ServiceContext serviceContext;
-        Channel<byte[]> channel;
+        IStreamingServiceContext serviceContext;
+        Channel<T> channel;
 
-        public QueuedResponseWriter(ServiceContext serviceContext)
+        public QueuedResponseWriter(IStreamingServiceContext serviceContext)
         {
             this.serviceContext = serviceContext;
-            this.channel = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions
+            channel = Channel.CreateUnbounded<T>(new UnboundedChannelOptions
             {
                 AllowSynchronousContinuations = false,
                 SingleReader = true,
@@ -26,7 +26,7 @@ namespace MagicOnion.Server
             ConsumeQueueAsync();
         }
 
-        public void Write(byte[] value)
+        public void Write(in T value)
         {
             channel.Writer.TryWrite(value);
         }
@@ -34,7 +34,7 @@ namespace MagicOnion.Server
         async void ConsumeQueueAsync()
         {
             var reader = channel.Reader;
-            var stream = serviceContext.ResponseStream!;
+            var stream = ((IServiceContextWithResponseStream<T>)serviceContext).ResponseStream!;
             do
             {
                 while (reader.TryRead(out var item))

@@ -9,6 +9,7 @@ namespace MagicOnion.Server.Hubs
     public class StreamingHubContext
     {
         ConcurrentDictionary<string, object>? items;
+        readonly StreamingServiceContext<StreamingHubRequestMessage, StreamingHubResponseMessage> serviceContext;
 
         /// <summary>Object storage per invoke.</summary>
         public ConcurrentDictionary<string, object> Items
@@ -24,23 +25,39 @@ namespace MagicOnion.Server.Hubs
         }
 
         /// <summary>Raw gRPC Context.</summary>
-        public ServiceContext ServiceContext { get; internal set; } = default!; /* lateinit */
-        public object HubInstance { get; internal set; } = default!; /* lateinit */
+        public ServiceContext ServiceContext => serviceContext;
+        public object HubInstance { get; }
 
-        public ReadOnlyMemory<byte> Request { get; internal set; }
-        public string Path { get; internal set; } = default!; /* lateinit */
-        public DateTime Timestamp { get; internal set; }
+        public object? Request { get; }
+        public string Path { get; }
+        public DateTime Timestamp { get;}
 
         // helper for reflection
-        internal MessagePackSerializerOptions SerializerOptions { get; set; } = default!; /* lateinit */
+        internal MessagePackSerializerOptions SerializerOptions => ServiceContext.SerializerOptions;
         public Guid ConnectionId => ServiceContext.ContextId;
 
         // public AsyncLock AsyncWriterLock { get; internal set; } = default!; /* lateinit */
-        internal int MessageId { get; set; }
-        internal int MethodId { get; set; }
+        internal int MessageId { get; }
+        internal int MethodId { get; }
 
-        internal int responseSize = -1;
-        internal Type? responseType;
+        internal StreamingHubContext(
+            StreamingServiceContext<StreamingHubRequestMessage, StreamingHubResponseMessage> serviceContext,
+            object hubInstance,
+            object? request,
+            string path,
+            DateTime timestamp,
+            int messageId,
+            int methodId
+        )
+        {
+            this.serviceContext = serviceContext;
+            HubInstance = hubInstance;
+            Request = request;
+            Path = path;
+            Timestamp = timestamp;
+            MessageId = messageId;
+            MethodId = methodId;
+        }
 
         // helper for reflection
         internal async ValueTask WriteResponseMessageNil(Task value)
@@ -50,28 +67,8 @@ namespace MagicOnion.Server.Hubs
                 return;
             }
 
-            // MessageFormat:
-            // response:  [messageId, methodId, response]
-            byte[] BuildMessage()
-            {
-                using (var buffer = ArrayPoolBufferWriter.RentThreadStaticWriter())
-                {
-                    var writer = new MessagePackWriter(buffer);
-
-                    writer.WriteArrayHeader(3);
-                    writer.Write(MessageId);
-                    writer.Write(MethodId);
-                    writer.WriteNil();
-                    writer.Flush();
-                    return buffer.WrittenSpan.ToArray();
-                }
-            }
-
             await value.ConfigureAwait(false);
-            var result = BuildMessage();
-            ServiceContext.QueueResponseStreamWrite(result);
-            responseSize = result.Length;
-            responseType = typeof(Nil);
+            serviceContext.QueueResponseStreamWrite(new StreamingHubResponseMessage(MessageId, MethodId, default));
         }
 
         internal async ValueTask WriteResponseMessage<T>(Task<T> value)
@@ -81,63 +78,17 @@ namespace MagicOnion.Server.Hubs
                 return;
             }
 
-            // MessageFormat:
-            // response:  [messageId, methodId, response]
-            byte[] BuildMessage(T v)
-            {
-                using (var buffer = ArrayPoolBufferWriter.RentThreadStaticWriter())
-                {
-                    var writer = new MessagePackWriter(buffer);
-                    writer.WriteArrayHeader(3);
-                    writer.Write(MessageId);
-                    writer.Write(MethodId);
-                    MessagePackSerializer.Serialize(ref writer, v, SerializerOptions);
-                    writer.Flush();
-                    return buffer.WrittenSpan.ToArray();
-                }
-            }
-            
             var vv = await value.ConfigureAwait(false);
-            byte[] result = BuildMessage(vv);
-            ServiceContext.QueueResponseStreamWrite(result);
-            responseSize = result.Length;
-            responseType = typeof(T);
+            serviceContext.QueueResponseStreamWrite(new StreamingHubResponseMessage(MessageId, MethodId, vv));
         }
 
         internal ValueTask WriteErrorMessage(int statusCode, string detail, Exception? ex, bool isReturnExceptionStackTraceInErrorDetail)
         {
-            // MessageFormat:
-            // error-response:  [messageId, statusCode, detail, StringMessage]
-            byte[] BuildMessage()
-            {
-                using (var buffer = ArrayPoolBufferWriter.RentThreadStaticWriter())
-                {
-                    var writer = new MessagePackWriter(buffer);
-                    writer.WriteArrayHeader(4);
-                    writer.Write(MessageId);
-                    writer.Write(statusCode);
-                    writer.Write(detail);
+            var msg = (isReturnExceptionStackTraceInErrorDetail && ex != null)
+                ? ex.ToString()
+                : null;
 
-                    var msg = (isReturnExceptionStackTraceInErrorDetail && ex != null)
-                        ? ex.ToString()
-                        : null;
-
-                    if (msg != null)
-                    {
-                        MessagePackSerializer.Serialize(ref writer, msg, SerializerOptions);
-                    }
-                    else
-                    {
-                        writer.WriteNil();
-                    }
-                    writer.Flush();
-                    return buffer.WrittenSpan.ToArray();
-                }
-            }
-
-            var result = BuildMessage();
-            ServiceContext.QueueResponseStreamWrite(result);
-            responseSize = result.Length;
+            serviceContext.QueueResponseStreamWrite(new StreamingHubResponseMessage(MessageId, statusCode, detail, msg));
             return default;
         }
     }

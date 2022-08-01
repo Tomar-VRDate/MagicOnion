@@ -108,7 +108,7 @@ namespace MagicOnion.Client.Internal
                 => inner.GetTrailers();
 
             public IAsyncStreamReader<TResponse> ResponseStream
-                => responseStream ?? (responseStream = (typeof(TRawResponse) == typeof(Box<TResponse>)) ? new UnboxAsyncStreamReader<TResponse>((IAsyncStreamReader<Box<TResponse>>)inner.ResponseStream) : (IAsyncStreamReader<TResponse>)inner.ResponseStream);
+                => responseStream ?? (responseStream = UnboxAsyncStreamReader.Create<TResponse, TRawResponse>(inner.ResponseStream));
 
             public void Dispose()
                 => inner.Dispose();
@@ -132,7 +132,7 @@ namespace MagicOnion.Client.Internal
                 => inner.GetTrailers();
 
             public IClientStreamWriter<TRequest> RequestStream
-                => requestStream ?? (requestStream = (typeof(TRawRequest) == typeof(Box<TRequest>)) ? new BoxClientStreamWriter<TRequest>((IClientStreamWriter<Box<TRequest>>)inner.RequestStream) : (IClientStreamWriter<TRequest>)inner.RequestStream);
+                => requestStream ?? (requestStream = BoxClientStreamWriter.Create<TRequest, TRawRequest>(inner.RequestStream));
             public Task<TResponse> ResponseAsync
                 => UnboxResponseAsync();
 
@@ -164,9 +164,9 @@ namespace MagicOnion.Client.Internal
                 => inner.GetTrailers();
 
             public IClientStreamWriter<TRequest> RequestStream
-                => requestStream ?? (requestStream = (typeof(TRawRequest) == typeof(Box<TRequest>)) ? new BoxClientStreamWriter<TRequest>((IClientStreamWriter<Box<TRequest>>)inner.RequestStream) : (IClientStreamWriter<TRequest>)inner.RequestStream);
+                => requestStream ?? (requestStream = BoxClientStreamWriter.Create<TRequest, TRawRequest>(inner.RequestStream));
             public IAsyncStreamReader<TResponse> ResponseStream
-                => responseStream ?? (responseStream = (typeof(TRawResponse) == typeof(Box<TResponse>)) ? new UnboxAsyncStreamReader<TResponse>((IAsyncStreamReader<Box<TResponse>>)inner.ResponseStream) : (IAsyncStreamReader<TResponse>)inner.ResponseStream);
+                => responseStream ?? (responseStream = UnboxAsyncStreamReader.Create<TResponse, TRawResponse>(inner.ResponseStream));
 
             public void Dispose()
                 => inner.Dispose();

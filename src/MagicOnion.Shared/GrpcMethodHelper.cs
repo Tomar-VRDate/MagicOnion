@@ -12,21 +12,35 @@ namespace MagicOnion
         public sealed class MagicOnionMethod<TRequest, TResponse, TRawRequest, TRawResponse>
         {
             public Method<TRawRequest, TRawResponse> Method { get; }
-            public Func<TRequest, TRawRequest> ToRawRequest { get; }
-            public Func<TResponse, TRawResponse> ToRawResponse { get; }
-            public Func<TRawRequest, TRequest> FromRawRequest { get; }
-            public Func<TRawResponse, TResponse> FromRawResponse { get; }
+
+            public TRawRequest ToRawRequest(TRequest value) => BoxHelperCache<TRequest, TRawRequest>.ToRaw(value);
+            public TRawResponse ToRawResponse(TResponse value) => BoxHelperCache<TResponse, TRawResponse>.ToRaw(value);
+            public TRequest FromRawRequest(TRawRequest value) => BoxHelperCache<TRequest, TRawRequest>.FromRaw(value);
+            public TResponse FromRawResponse(TRawResponse value) => BoxHelperCache<TResponse, TRawResponse>.FromRaw(value);
 
             public MagicOnionMethod(Method<TRawRequest, TRawResponse> method)
             {
                 Method = method;
-                ToRawRequest = ((typeof(TRawRequest) == typeof(Box<TRequest>)) ? (Func<TRequest, TRawRequest>)(x => (TRawRequest)(object)Box.Create(x)) : x => (TRawRequest)(object)x);
-                ToRawResponse = ((typeof(TRawResponse) == typeof(Box<TResponse>)) ? (Func<TResponse, TRawResponse>)(x => (TRawResponse)(object)Box.Create(x)) : x => (TRawResponse)(object)x);
-                FromRawRequest = ((typeof(TRawRequest) == typeof(Box<TRequest>)) ? (Func<TRawRequest, TRequest>)(x => ((Box<TRequest>)(object)x).Value) : x => (TRequest)(object)x);
-                FromRawResponse = ((typeof(TRawResponse) == typeof(Box<TResponse>)) ? (Func<TRawResponse, TResponse>)(x => ((Box<TResponse>)(object)x).Value) : x => (TResponse)(object)x);
             }
         }
         
+        static class BoxHelperCache<T, TRaw>
+        {
+            public static Func<T, TRaw> ToRaw { get; }
+            public static Func<TRaw, T> FromRaw { get; }
+
+            static BoxHelperCache()
+            {
+                ToRaw = (typeof(TRaw) == typeof(Box<T>))
+                    ? (Func<T, TRaw>)(x => (TRaw)(object)Box.Create(x))
+                    : x => (TRaw)(object)x;
+
+                FromRaw = (typeof(TRaw) == typeof(Box<T>)
+                    ? (Func<TRaw, T>)(x => ((Box<T>)(object)x).Value)
+                    : x => (T)(object)x);
+            }
+        }
+
         public static MagicOnionMethod<Nil, TResponse, Box<Nil>, TRawResponse> CreateMethod<TResponse, TRawResponse>(MethodType methodType, string serviceName, string name, MessagePackSerializerOptions serializerOptions)
         {
             // WORKAROUND: Prior to MagicOnion 5.0, the request type for the parameter-less method was byte[].
