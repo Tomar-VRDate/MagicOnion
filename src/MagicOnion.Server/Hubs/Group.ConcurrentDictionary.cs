@@ -133,7 +133,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteAllAsync<T>(int methodId, T value, bool fireAndForget)
         {
-            var message = new StreamingHubResponseMessage(methodId, value);
+            var message = StreamingHubResponseMessage.Create(methodId, value);
 
             if (fireAndForget)
             {
@@ -154,7 +154,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteExceptAsync<T>(int methodId, T value, Guid connectionId, bool fireAndForget)
         {
-            var message = new StreamingHubResponseMessage(methodId, value);
+            var message = StreamingHubResponseMessage.Create(methodId, value);
             if (fireAndForget)
             {
                 var writeCount = 0;
@@ -177,7 +177,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteExceptAsync<T>(int methodId, T value, Guid[] connectionIds, bool fireAndForget)
         {
-            var message = new StreamingHubResponseMessage(methodId, value);
+            var message = StreamingHubResponseMessage.Create(methodId, value);
             if (fireAndForget)
             {
                 var writeCount = 0;
@@ -206,7 +206,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteToAsync<T>(int methodId, T value, Guid connectionId, bool fireAndForget)
         {
-            var message = new StreamingHubResponseMessage(methodId, value);
+            var message = StreamingHubResponseMessage.Create(methodId, value);
             if (fireAndForget)
             {
                 if (members.TryGetValue(connectionId, out var context))
@@ -224,7 +224,7 @@ namespace MagicOnion.Server.Hubs
 
         public Task WriteToAsync<T>(int methodId, T value, Guid[] connectionIds, bool fireAndForget)
         {
-            var message = new StreamingHubResponseMessage(methodId, value);
+            var message = StreamingHubResponseMessage.Create(methodId, value);
             if (fireAndForget)
             {
                 var writeCount = 0;

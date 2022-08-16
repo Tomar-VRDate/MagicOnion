@@ -148,6 +148,7 @@ namespace MagicOnion
                 serializer: (obj, ctx) =>
                 {
                     MessagePackSerializer.Serialize(ctx.GetBufferWriter(), obj.Value, serializerOptions);
+                    Box.Return(obj);
                     ctx.Complete();
                 },
                 deserializer: (ctx) => Box.Create(MessagePackSerializer.Deserialize<T>(ctx.PayloadAsReadOnlySequence(), serializerOptions))

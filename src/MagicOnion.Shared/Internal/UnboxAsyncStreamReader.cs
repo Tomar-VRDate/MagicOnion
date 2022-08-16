@@ -13,6 +13,8 @@ namespace MagicOnion.Internal
     internal class UnboxAsyncStreamReader<T> : IAsyncStreamReader<T>
     {
         readonly IAsyncStreamReader<Box<T>> inner;
+        T current;
+        bool unboxed;
 
         public UnboxAsyncStreamReader(IAsyncStreamReader<Box<T>> inner)
         {
@@ -20,9 +22,26 @@ namespace MagicOnion.Internal
         }
 
         public Task<bool> MoveNext(CancellationToken cancellationToken)
-            => inner.MoveNext(cancellationToken);
+        {
+            unboxed = false;
+            return inner.MoveNext(cancellationToken);
+        }
 
         public T Current
-            => inner.Current.Value;
+        {
+            get
+            {
+                if (unboxed)
+                {
+                    return current;
+                }
+
+                current = inner.Current.Value;
+                Box.Return(inner.Current);
+                unboxed = true;
+
+                return current;
+            }
+        }
     }
 }

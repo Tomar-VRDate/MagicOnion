@@ -1,114 +1,38 @@
 using System;
+using MagicOnion.Internal;
 using MessagePack;
 using MessagePack.Formatters;
 
 namespace MagicOnion.Server.Hubs;
 
-[MessagePackFormatter(typeof(StreamingHubResponseMessageFormatter))]
-public class StreamingHubResponseMessage
+public readonly struct StreamingHubResponseMessage
 {
     public int MessageId { get; }
-    public int? MethodId { get; }
-    public object? Response { get; }
+    public int? MethodId  { get; }
+    public object? Response  { get; }
 
-    public int? StatusCode { get; }
-    public string? Detail { get; }
-    public string? Message { get; }
+    public int? StatusCode  { get; }
+    public string? Detail  { get; }
+    public string? Message  { get; }
 
-    // error-response:  [messageId, statusCode, detail, StringMessage]
-    public StreamingHubResponseMessage(int messageId, int statusCode, string detail, string? message)
+    internal StreamingHubResponseMessage(int messageId, int? methodId, object? response, int? statusCode, string? detail, string? message)
     {
         MessageId = messageId;
-
-        MethodId = default;
-        Response = default;
-
+        MethodId = methodId;
+        Response = response;
         StatusCode = statusCode;
         Detail = detail;
         Message = message;
     }
 
+    // error-response:  [messageId, statusCode, detail, StringMessage]
+    public static StreamingHubResponseMessage Create(int messageId, int statusCode, string detail, string? message)
+        => new StreamingHubResponseMessage(messageId, default, default, statusCode, detail, message);
     // response:  [messageId, methodId, response]
-    public StreamingHubResponseMessage(int messageId, int methodId, object? response)
-    {
-        MessageId = messageId;
-
-        MethodId = methodId;
-        Response = response;
-
-        StatusCode = default;
-        Detail = default;
-        Message = default;
-    }
-
+    public static StreamingHubResponseMessage Create(int messageId, int methodId, object? response)
+        => new StreamingHubResponseMessage(messageId, methodId, response, default, default, default);
     // response:  [messageId, response]
-    public StreamingHubResponseMessage(int messageId, object? response)
-    {
-        MessageId = messageId;
-
-        MethodId = default;
-        Response = response;
-
-        StatusCode = default;
-        Detail = default;
-        Message = default;
-    }
-
-    public class StreamingHubResponseMessageFormatter : IMessagePackFormatter<StreamingHubResponseMessage>
-    {
-        public void Serialize(ref MessagePackWriter writer, StreamingHubResponseMessage value, MessagePackSerializerOptions options)
-        {
-            if (value.StatusCode is not null)
-            {
-                // error-response:  [messageId, statusCode, detail, stringMessage]
-                writer.WriteArrayHeader(4);
-                writer.WriteInt32(value.MessageId);
-                writer.WriteInt32(value.StatusCode.Value);
-                writer.Write(value.Detail);
-                if (value.Message is null)
-                {
-                    writer.WriteNil();
-                }
-                else
-                {
-                    writer.Write(value.Message);
-                }
-            }
-            else if (value.MethodId.HasValue)
-            {
-                // response: [messageId, methodId, response]
-                writer.WriteArrayHeader(3);
-                writer.WriteInt32(value.MessageId);
-                writer.WriteInt32(value.MethodId.Value);
-                if (value.Response is null or Nil)
-                {
-                    writer.WriteNil();
-                }
-                else
-                {
-                    MessagePackSerializer.Serialize(value.Response.GetType(), ref writer, value.Response, options);
-                }
-            }
-            else
-            {
-                // response:  [messageId, response]
-                writer.WriteArrayHeader(2);
-                writer.WriteInt32(value.MessageId);
-                if (value.Response is null or Nil)
-                {
-                    writer.WriteNil();
-                }
-                else
-                {
-                    MessagePackSerializer.Serialize(value.Response.GetType(), ref writer, value.Response, options);
-                }
-            }
-            writer.Flush();
-        }
-
-        public StreamingHubResponseMessage Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
-        {
-            throw new NotSupportedException();
-        }
-    }
+    public static StreamingHubResponseMessage Create(int messageId, object? response)
+        => new StreamingHubResponseMessage(messageId, default, response, default, default, default);
 }
+

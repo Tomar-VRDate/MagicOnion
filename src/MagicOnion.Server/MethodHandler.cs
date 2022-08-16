@@ -419,7 +419,7 @@ namespace MagicOnion.Server
                 this.ServiceName,
                 this.MethodName,
                 (Marshaller<TRawRequest>)(object)Hubs.StreamingHubMarshaller.CreateForRequest(this, serializerOptions),
-                (Marshaller<TRawResponse>)(object)Hubs.StreamingHubMarshaller.CreateForResponse(serializerOptions)
+                (Marshaller<TRawResponse>)(object)Hubs.StreamingHubMarshaller.CreateForResponse(this, serializerOptions)
             ));
 #pragma warning disable CS8604
             binder.AddMethod(new MagicOnionServerMethod<TRawRequest, TRawResponse>(method.Method, this),

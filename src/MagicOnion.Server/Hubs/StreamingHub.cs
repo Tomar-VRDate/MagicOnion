@@ -148,7 +148,7 @@ namespace MagicOnion.Server.Hubs
             // NOTE: To prevent buffering by AWS ALB or reverse-proxy.
             // response:  [messageId, methodId, response]
             // HACK: If the ID of the message is `-1`, the client will ignore the message.
-            await writer.WriteAsync(new StreamingHubResponseMessage(-1, 0, Nil.Default));
+            await writer.WriteAsync(StreamingHubResponseMessage.Create(-1, 0, Nil.Default));
 
             // Main loop of StreamingHub.
             // Be careful to allocation and performance.
@@ -163,12 +163,11 @@ namespace MagicOnion.Server.Hubs
                 // Create a context per invoking method.
                 var context = new StreamingHubContext(
                     (StreamingServiceContext<StreamingHubRequestMessage, StreamingHubResponseMessage>)Context,
+                    data.Handler,
                     this,
                     data.Argument,
-                    data.Handler.ToString(),
                     DateTime.UtcNow,
-                    data.MessageId,
-                    data.Handler.MethodId
+                    data.MessageId
                 );
 
                 var isErrorOrInterrupted = false;

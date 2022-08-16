@@ -1,15 +1,46 @@
 using MessagePack;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Linq;
 using MagicOnion.Utils;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using System.Threading;
+using MessagePack.Formatters;
 
 namespace MagicOnion.Server.Hubs
 {
+    internal abstract class StreamingHubHandlerMessageSerializer
+    {
+        public abstract void Serialize(ref MessagePackWriter writer, object? value);
+        public abstract object? Deserialize(ref MessagePackReader reader);
+    }
+
+    internal sealed class StreamingHubHandlerMessageSerializer<TRequest, TResponse> : StreamingHubHandlerMessageSerializer
+    {
+        readonly MessagePackSerializerOptions serializerOptions;
+        readonly IMessagePackFormatter<TRequest> requestFormatter;
+        readonly IMessagePackFormatter<TResponse> responseFormatter;
+
+        public StreamingHubHandlerMessageSerializer(MessagePackSerializerOptions serializerOptions)
+        {
+            this.serializerOptions = serializerOptions;
+            this.requestFormatter = serializerOptions.Resolver.GetFormatter<TRequest>();
+            this.responseFormatter = serializerOptions.Resolver.GetFormatter<TResponse>();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public override void Serialize(ref MessagePackWriter writer, object? value)
+            => responseFormatter.Serialize(ref writer, (TResponse)value!, serializerOptions);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public override object? Deserialize(ref MessagePackReader reader)
+            => requestFormatter.Deserialize(ref reader, serializerOptions);
+    }
+
     public class StreamingHubHandler : IEquatable<StreamingHubHandler>
     {
         public string HubName { get; private set; }
@@ -27,6 +58,8 @@ namespace MagicOnion.Server.Hubs
         internal readonly MessagePackSerializerOptions serializerOptions;
         internal readonly Func<StreamingHubContext, ValueTask> MethodBody;
 
+        internal readonly StreamingHubHandlerMessageSerializer Serializer;
+
         readonly string toStringCache;
         readonly int getHashCodeCache;
 
@@ -35,7 +68,7 @@ namespace MagicOnion.Server.Hubs
         static readonly MethodInfo messagePackDeserialize = typeof(MessagePackSerializer).GetMethods()
             .First(x => x.Name == "Deserialize" && x.GetParameters().Length == 3 && x.GetParameters()[0].ParameterType == typeof(ReadOnlyMemory<byte>) && x.GetParameters()[1].ParameterType == typeof(MessagePackSerializerOptions));
 
-        private static MethodInfo GetInterfaceMethod(Type targetType, Type interfaceType, string targetMethodName)
+        static MethodInfo GetInterfaceMethod(Type targetType, Type interfaceType, string targetMethodName)
         {
             var mapping = targetType.GetInterfaceMap(interfaceType);
             var methodIndex = Array.FindIndex(mapping.TargetMethods, mi => mi.Name == targetMethodName);
@@ -66,6 +99,8 @@ namespace MagicOnion.Server.Hubs
             this.RequestType = MagicOnionMarshallers.CreateRequestTypeAndSetResolver(classType.Name + "/" + methodInfo.Name, parameters, ref resolver);
 
             this.serializerOptions = handlerOptions.SerializerOptions.WithResolver(resolver);
+
+            this.Serializer = (StreamingHubHandlerMessageSerializer)Activator.CreateInstance(typeof(StreamingHubHandlerMessageSerializer<,>).MakeGenericType(this.RequestType, this.UnwrappedResponseType ?? typeof(Nil)), this.serializerOptions)!;
 
             this.AttributeLookup = classType.GetCustomAttributes(true)
                 .Concat(methodInfo.GetCustomAttributes(true))

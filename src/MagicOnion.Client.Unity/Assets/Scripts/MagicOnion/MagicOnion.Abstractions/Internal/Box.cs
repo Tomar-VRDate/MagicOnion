@@ -11,7 +11,7 @@ namespace MagicOnion.Internal
     [EditorBrowsable(EditorBrowsableState.Never)]
     public sealed class Box<T> : IEquatable<Box<T>>
     {
-        public readonly T Value;
+        public T Value { get; private set; }
 
         internal Box(T value)
         {
@@ -40,6 +40,24 @@ namespace MagicOnion.Internal
 
         public static bool operator !=(Box<T> valueA, Box<T> valueB)
             => !(valueA == valueB);
+
+        
+        internal static class Pool
+        {
+            static TlsBackedObjectPool<Box<T>> pool { get; } = new TlsBackedObjectPool<Box<T>>(() => new Box<T>(default));
+
+            public static Box<T> Rent(T value)
+            {
+                var box = pool.Rent();
+                box.Value = value;
+                return box;
+            }
+
+            public static void Return(Box<T> box)
+            {
+                pool.Return(box);
+            }
+        }
     }
 
     [EditorBrowsable(EditorBrowsableState.Never)]
@@ -52,28 +70,17 @@ namespace MagicOnion.Internal
         public static Box<T> Create<T>(T value)
             => (value is MessagePack.Nil) ? (Box<T>)(object)Nil
                 : (value is bool b) ? (Box<T>)(object)(b ? BoolTrue : BoolFalse)
-                : new Box<T>(value);
+                : Box<T>.Pool.Rent(value);
 
-        public static T FromRaw<T, TRaw>(TRaw rawValue)
-            => Cache<T, TRaw>.FromRaw(rawValue);
-        public static TRaw ToRaw<T, TRaw>(T value)
-            => Cache<T, TRaw>.ToRaw(value);
-
-        static class Cache<T, TRaw>
+        public static void Return<T>(Box<T> box)
         {
-            public static Func<T, TRaw> ToRaw { get; }
-            public static Func<TRaw, T> FromRaw { get; }
-
-            static Cache()
+            if (box is Box<Nil> || box is Box<bool>)
             {
-                ToRaw = (typeof(TRaw) == typeof(Box<T>))
-                    ? (Func<T, TRaw>)(x => (TRaw)(object)Box.Create(x))
-                    : x => (TRaw)(object)x;
-
-                FromRaw = (typeof(TRaw) == typeof(Box<T>)
-                    ? (Func<TRaw, T>)(x => ((Box<T>)(object)x).Value)
-                    : x => (T)(object)x);
+                return;
             }
+
+            Box<T>.Pool.Return(box);
         }
     }
+
 }

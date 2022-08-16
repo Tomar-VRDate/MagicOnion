@@ -26,6 +26,7 @@ namespace MagicOnion.Server.Hubs
 
         /// <summary>Raw gRPC Context.</summary>
         public ServiceContext ServiceContext => serviceContext;
+        public StreamingHubHandler StreamingHubHandler { get; }
         public object HubInstance { get; }
 
         public object? Request { get; }
@@ -42,21 +43,21 @@ namespace MagicOnion.Server.Hubs
 
         internal StreamingHubContext(
             StreamingServiceContext<StreamingHubRequestMessage, StreamingHubResponseMessage> serviceContext,
+            StreamingHubHandler handler,
             object hubInstance,
             object? request,
-            string path,
             DateTime timestamp,
-            int messageId,
-            int methodId
+            int messageId
         )
         {
             this.serviceContext = serviceContext;
+            StreamingHubHandler = handler;
             HubInstance = hubInstance;
             Request = request;
-            Path = path;
+            Path = handler.ToString();
             Timestamp = timestamp;
             MessageId = messageId;
-            MethodId = methodId;
+            MethodId = handler.MethodId;
         }
 
         // helper for reflection
@@ -68,7 +69,7 @@ namespace MagicOnion.Server.Hubs
             }
 
             await value.ConfigureAwait(false);
-            serviceContext.QueueResponseStreamWrite(new StreamingHubResponseMessage(MessageId, MethodId, default));
+            serviceContext.QueueResponseStreamWrite(StreamingHubResponseMessage.Create(MessageId, MethodId, default));
         }
 
         internal async ValueTask WriteResponseMessage<T>(Task<T> value)
@@ -79,7 +80,7 @@ namespace MagicOnion.Server.Hubs
             }
 
             var vv = await value.ConfigureAwait(false);
-            serviceContext.QueueResponseStreamWrite(new StreamingHubResponseMessage(MessageId, MethodId, vv));
+            serviceContext.QueueResponseStreamWrite(StreamingHubResponseMessage.Create(MessageId, MethodId, vv));
         }
 
         internal ValueTask WriteErrorMessage(int statusCode, string detail, Exception? ex, bool isReturnExceptionStackTraceInErrorDetail)
@@ -88,7 +89,7 @@ namespace MagicOnion.Server.Hubs
                 ? ex.ToString()
                 : null;
 
-            serviceContext.QueueResponseStreamWrite(new StreamingHubResponseMessage(MessageId, statusCode, detail, msg));
+            serviceContext.QueueResponseStreamWrite(StreamingHubResponseMessage.Create(MessageId, statusCode, detail, msg));
             return default;
         }
     }
