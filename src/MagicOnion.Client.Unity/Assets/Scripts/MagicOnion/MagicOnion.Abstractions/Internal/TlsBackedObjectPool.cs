@@ -1,33 +1,36 @@
 using System;
+using System.ComponentModel;
 
 namespace MagicOnion.Internal
 {
+    [EditorBrowsable(EditorBrowsableState.Never)]
     public class TlsBackedObjectPool<T>
+        where T : class
     {
         [ThreadStatic]
-        private static T[]? _pooled;
+        static T[] pooled;
         [ThreadStatic]
-        private static int _index;
+        static int index;
     
-        private readonly Func<T> _factory;
-        private readonly int _bucketSize;
+        readonly Func<T> _factory;
+        readonly int poolSize;
     
-        public TlsBackedObjectPool(Func<T> factory, int bucketSize = 16)
+        public TlsBackedObjectPool(Func<T> factory, int poolSize = 16)
         {
             _factory = factory;
-            _bucketSize = bucketSize;
+            this.poolSize = poolSize;
         }
     
         public T Rent()
         {
-            if (_pooled is null || _index == 0)
+            if (pooled is null || index == 0)
             {
                 var value = _factory();
                 return value;
             }
             else
             {
-                var value = _pooled[--_index];
+                var value = pooled[--index];
                 return value;
             }
         }
@@ -38,17 +41,15 @@ namespace MagicOnion.Internal
             {
                 return;
             }
-            else
+
+            if (pooled is null)
             {
-                if (_pooled is null)
-                {
-                    _pooled = new T[_bucketSize];
-                }
-            
-                if (_index != _pooled.Length)
-                {
-                    _pooled[_index++] = value;
-                }
+                pooled = new T[poolSize];
+            }
+
+            if (index != pooled.Length)
+            {
+                pooled[index++] = value;
             }
         }
     }
